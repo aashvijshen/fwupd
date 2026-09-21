@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <condition_variable>
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <functional>
 #include <gio/gunixoutputstream.h>
 #include <memory>
@@ -330,6 +331,22 @@ class FwupdBinderBridge : public aidl_fwupd::BnFwupd
 		g_info("received install request for device %s", in_request.id.c_str());
 
 		int engine_fd = in_request.firmwareFd.get();
+		if (engine_fd < 0 && in_request.filename.has_value()) {
+			const std::string &path = in_request.filename.value();
+			const std::string allowed_prefix = "/vendor/usr/share/fwupd/";
+			if (path.rfind(allowed_prefix, 0) != 0 ||
+			    path.find("..") != std::string::npos) {
+				return ::ndk::ScopedAStatus::fromServiceSpecificErrorWithMessage(
+				    FWUPD_ERROR_PERMISSION_DENIED,
+				    "local filename must reside under /vendor/usr/share/fwupd/");
+			}
+			engine_fd = open(path.c_str(), O_RDONLY | O_CLOEXEC);
+			if (engine_fd < 0) {
+				return ::ndk::ScopedAStatus::fromServiceSpecificErrorWithMessage(
+				    FWUPD_ERROR_INVALID_FILE,
+				    ("failed to open local vendor CAB file: " + path).c_str());
+			}
+		}
 		if (engine_fd < 0) {
 			return ::ndk::ScopedAStatus::fromServiceSpecificErrorWithMessage(
 			    FWUPD_ERROR_INVALID_FILE,
